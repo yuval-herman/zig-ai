@@ -1,0 +1,6 @@
+weights.json
+mnist.json
+emnist/
+Gutenberg/
+.zig-cache/
+zig-out/

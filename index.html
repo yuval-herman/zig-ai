@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Visualizer</title>
+  </head>
+  <body>
+    <style>
+      body {
+        margin: 0;
+      }
+    </style>
+    <canvas width="280" height="280"></canvas>
+    <div id="output"></div>
+    <div id="predictednumber"></div>
+    <div id="correctnumber"></div>
+    <div id="dataindex"></div>
+    <div id="buttons">
+      <button id="next">Next</button>
+      <button id="nextwrong">Next wrong</button>
+      <button id="prev">Prev</button>
+    </div>
+    <script>
+      const outputDiv = document.querySelector("#output");
+      const predictednumberDiv = document.querySelector("#predictednumber");
+      const correctnumberDiv = document.querySelector("#correctnumber");
+      const dataindexDiv = document.querySelector("#dataindex");
+
+      let data_index = 0;
+      const prevButton = document.querySelector("#prev");
+      const nextButton = document.querySelector("#next");
+      const nextwrongButton = document.querySelector("#nextwrong");
+      prevButton.addEventListener("click", () => {
+        data_index--;
+        if (data_index < 0) data_index = mnist.label.length - 1;
+        runData();
+      });
+      nextButton.addEventListener("click", () => {
+        data_index = (data_index + 1) % mnist.label.length;
+        runData();
+      });
+      nextwrongButton.addEventListener("click", () => {
+        do {
+          data_index = (data_index + 1) % mnist.label.length;
+          runData();
+        } while (mnist.label[data_index] === predicted);
+      });
+
+      const canvas = document.getElementsByTagName("canvas")[0];
+      const ctx = canvas.getContext("2d");
+      let network;
+      let mnist;
+      let predicted;
+
+      (async () => {
+        network = await (await fetch("weights.json")).json();
+        mnist = await (await fetch("mnist.json")).json();
+      })().then(() => {
+        runData();
+      });
+      function runData() {
+        let data = mnist.data.slice(
+          28 * 28 * data_index,
+          28 * 28 * (data_index + 1)
+        );
+        const output = runNN(data, network);
+        outputDiv.innerHTML =
+          "predicted numbers: " + output.map((v, i) => i + ": " + v).join("\n");
+        correctnumberDiv.innerHTML =
+          "correct number: " + mnist.label[data_index];
+        dataindexDiv.innerHTML = "data index: " + data_index;
+        predicted = output.reduce((p, c, i, a) => (c > a[p] ? i : p), 0);
+        predictednumberDiv.innerHTML = "predicted number: " + predicted;
+        drawNumber(data);
+
+        document.body.style.backgroundColor =
+          predicted === mnist.label[data_index] ? "unset" : "red";
+      }
+      function runNN(input, { biases, weights, structure }) {
+        let bias_index = 0;
+        let weight_index = 0;
+        let layers_output = structure.map(() => []);
+        layers_output[0] = input;
+        for (
+          let layer_index = 1;
+          layer_index < structure.length;
+          layer_index++
+        ) {
+          for (
+            let out_index = 0;
+            out_index < structure[layer_index];
+            out_index++
+          ) {
+            let output = biases[bias_index];
+            bias_index++;
+            for (
+              let in_index = 0;
+              in_index < structure[layer_index - 1];
+              in_index++
+            ) {
+              output +=
+                weights[weight_index] *
+                layers_output[layer_index - 1][in_index];
+              weight_index++;
+            }
+            layers_output[layer_index].push(activation(output));
+          }
+        }
+        return layers_output.at(-1);
+        function activation(x) {
+          return x > 0 ? x : 0.01 * x;
+        }
+      }
+      function drawNumber(data) {
+        for (let row = 0; row < 28; row++) {
+          for (let col = 0; col < 28; col++) {
+            const b = data[row * 28 + col] * 255;
+            ctx.fillStyle = `rgb(${b},${b},${b})`;
+
+            ctx.fillRect(row * 10, col * 10, canvas.width, canvas.height / 2);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
