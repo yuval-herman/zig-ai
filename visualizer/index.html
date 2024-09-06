@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Visualizer</title>
+  </head>
+  <body>
+    <style>
+      body {
+        margin: 0;
+      }
+      canvas {
+        width: 280px;
+        height: 280px;
+        image-rendering: pixelated;
+        rotate: 90deg;
+        scale: 1 -1;
+      }
+    </style>
+    <canvas width="28" height="28"></canvas>
+    <div id="output" style="display: none"></div>
+    <div id="predictednumber"></div>
+    <div id="correctnumber"></div>
+    <div id="dataindex"></div>
+    <div id="buttons">
+      <button id="clear">Clear</button>
+      <button id="prev">Prev</button>
+      <button id="next">Next</button>
+      <button id="nextwrong">Next wrong</button>
+    </div>
+    <script src="globals.js"></script>
+    <script src="canvas.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
