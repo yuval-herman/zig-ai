@@ -2,88 +2,68 @@ const std = @import("std");
 const fs = std.fs;
 const MLP_space = @import("./mlp.zig");
 const MLP = MLP_space.MLP;
-const BatchIterator = MLP_space.BatchIterator;
+
+const BatchIterator = struct {
+    images: []const f64,
+    labels: []const u8,
+    index: usize = 0,
+    output_array: [10]f64 = std.mem.zeroes([10]f64),
+
+    pub fn next(self: *BatchIterator) ?struct { input: []const f64, output: []const f64 } {
+        if (self.index == self.labels.len) {
+            return null;
+        }
+        defer self.index += 1;
+
+        self.output_array[self.labels[self.index]] = 1;
+        if (self.index != 0) self.output_array[self.labels[self.index - 1]] = 0;
+
+        return .{
+            .input = self.images[self.index * 28 * 28 .. (self.index + 1) * 28 * 28],
+            .output = &self.output_array,
+        };
+    }
+};
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
     // ### hyper parametes
-    const NETWORK_STRUCTURE = [_]usize{ 28 * 28, 50, 10 };
-    const START_BATCH_SIZE = 5;
-    const LEARN_RATE: f64 = 0.5 / @as(f64, @floatFromInt(START_BATCH_SIZE));
-    const EPOCHS = 20;
+    const NETWORK_STRUCTURE = [_]usize{ 28 * 28, 20, 10 };
+    const START_BATCH_SIZE = 500;
+    const LEARN_RATE: f64 = 0.01 / @as(f64, @floatFromInt(START_BATCH_SIZE));
+    const EPOCHS = 1;
 
     // ### initialization
     var mlp = try MLP(&NETWORK_STRUCTURE).init(.{ .learn_rate = LEARN_RATE }, allocator);
 
     // ### training
-    const mnsit = try @import("./emnist.zig").mnist();
-
-    // {
-    //     const out_file = try fs.cwd().createFile("./mnist.json", .{});
-    //     defer out_file.close();
-
-    //     var writer = std.io.bufferedWriter(out_file.writer());
-
-    //     _ = try writer.write("{");
-    //     _ = try writer.write("\"data\": [");
-    //     try writer.flush();
-    //     for (mnsit.test_data.data[0 .. mnsit.test_data.data.len - 1]) |data| {
-    //         try std.fmt.format(writer.writer(), "{d},", .{data});
-    //     }
-    //     try std.fmt.format(writer.writer(), "{d}", .{mnsit.test_data.data[mnsit.test_data.data.len - 1]});
-    //     _ = try writer.write("],");
-    //     _ = try writer.write("\"label\": [");
-    //     try writer.flush();
-    //     for (mnsit.test_data.labels[0 .. mnsit.test_data.labels.len - 1]) |label| {
-    //         try std.fmt.format(writer.writer(), "{d},", .{label});
-    //     }
-    //     try std.fmt.format(writer.writer(), "{d}", .{mnsit.test_data.labels[mnsit.test_data.labels.len - 1]});
-    //     _ = try writer.write("]}");
-    //     try writer.flush();
-    // }
+    const mnist = try @import("./emnist.zig").mnist();
 
     var batch = BatchIterator{
         .images = undefined,
         .labels = undefined,
     };
-    // var expected = std.mem.zeroes([10]f64);
 
-    var batch_size: usize = START_BATCH_SIZE;
-    const max_batch_size_epoch = 10;
-    const max_batch_size = mnsit.training_data.labels.len / 1000;
-    const b_const = (max_batch_size - START_BATCH_SIZE) / ((max_batch_size_epoch) * (max_batch_size_epoch));
     for (0..EPOCHS) |epoch_counter| {
-        mlp.learn_rate = LEARN_RATE * @as(f64, @floatFromInt(batch_size));
-        batch_size = @min(max_batch_size - 1, b_const * epoch_counter * epoch_counter + START_BATCH_SIZE);
-        mlp.learn_rate = LEARN_RATE / @as(f64, @floatFromInt(batch_size));
-
-        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * @as(f64, @floatFromInt(batch_size)), batch_size });
-        for (0..mnsit.training_data.labels.len / batch_size) |batch_index| {
-            const img_batch = 28 * 28 * batch_size;
-            batch.images = mnsit.training_data.data[img_batch * batch_index .. img_batch * (batch_index + 1)];
-            batch.labels = mnsit.training_data.labels[batch_size * batch_index .. batch_size * (batch_index + 1)];
+        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * START_BATCH_SIZE, START_BATCH_SIZE });
+        for (0..mnist.training_data.labels.len / START_BATCH_SIZE) |batch_index| {
+            const img_batch = 28 * 28 * START_BATCH_SIZE;
+            batch.images = mnist.training_data.data[img_batch * batch_index .. img_batch * (batch_index + 1)];
+            batch.labels = mnist.training_data.labels[START_BATCH_SIZE * batch_index .. START_BATCH_SIZE * (batch_index + 1)];
             batch.index = 0;
             mlp.backprop(&batch);
         }
 
-        // expected[batch.labels[batch_size - 1]] = 1;
-        // defer expected[batch.labels[batch_size - 1]] = 0;
-
-        // std.debug.print("cost {d}\n", .{outputCost(
-        //     mlp.activated_layers_output[mlp.activated_layers_output.len - 1],
-        //     &expected,
-        // )});
-
-        batch.images = mnsit.test_data.data;
-        batch.labels = mnsit.test_data.labels;
+        batch.images = mnist.test_data.data;
+        batch.labels = mnist.test_data.labels;
         batch.index = 0;
 
         var correct: u16 = 0;
         var wrong: u16 = 0;
         while (batch.next()) |data_point| {
-            const output = mlp.forward(data_point.image);
+            const output = mlp.forward(data_point.input);
             var max = output[0];
             var max_index: usize = 0;
             for (output[1..], 1..) |o, i| {
@@ -93,7 +73,8 @@ pub fn main() !void {
                 }
             }
 
-            if (max_index == data_point.label) {
+            // I use batch.index-1 because batch.next() incerements the index after the function returns
+            if (max_index == batch.labels[batch.index - 1]) {
                 correct += 1;
             } else {
                 wrong += 1;
@@ -105,6 +86,34 @@ pub fn main() !void {
             100 * @as(f32, @floatFromInt(correct)) / @as(f32, @floatFromInt(correct + wrong)),
         });
     }
+    try writeWeights(NETWORK_STRUCTURE, mlp);
+}
+
+fn writeMnistJson(mnist: anytype) !void {
+    const out_file = try fs.cwd().createFile("./mnist.json", .{});
+    defer out_file.close();
+
+    var writer = std.io.bufferedWriter(out_file.writer());
+
+    _ = try writer.write("{");
+    _ = try writer.write("\"data\": [");
+    try writer.flush();
+    for (mnist.test_data.data[0 .. mnist.test_data.data.len - 1]) |data| {
+        try std.fmt.format(writer.writer(), "{d},", .{data});
+    }
+    try std.fmt.format(writer.writer(), "{d}", .{mnist.test_data.data[mnist.test_data.data.len - 1]});
+    _ = try writer.write("],");
+    _ = try writer.write("\"label\": [");
+    try writer.flush();
+    for (mnist.test_data.labels[0 .. mnist.test_data.labels.len - 1]) |label| {
+        try std.fmt.format(writer.writer(), "{d},", .{label});
+    }
+    try std.fmt.format(writer.writer(), "{d}", .{mnist.test_data.labels[mnist.test_data.labels.len - 1]});
+    _ = try writer.write("]}");
+    try writer.flush();
+}
+
+fn writeWeights(NETWORK_STRUCTURE: anytype, mlp: anytype) !void {
     const out_file = try fs.cwd().createFile("./weights.json", .{});
     defer out_file.close();
 
