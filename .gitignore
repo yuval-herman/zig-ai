@@ -4,3 +4,4 @@ emnist/
 Gutenberg/
 .zig-cache/
 zig-out/
+scratchpad.zig
