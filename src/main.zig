@@ -30,7 +30,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // ### hyper parametes
-    const NETWORK_STRUCTURE = [_]usize{ 28 * 28, 20, 10 };
+    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 20, 10 };
     const START_BATCH_SIZE = 500;
     const LEARN_RATE: f64 = 0.01 / @as(f64, @floatFromInt(START_BATCH_SIZE));
     const EPOCHS = 1;

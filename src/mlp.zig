@@ -36,7 +36,7 @@ const HyperParameters = struct {
     learn_rate: f64,
 };
 
-pub fn MLP(NETWORK_STRUCTURE: []const usize) type {
+pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
     comptime var bias_amount = 0;
     comptime var weights_amount = 0;
     inline for (1..NETWORK_STRUCTURE.len) |i| {
@@ -89,16 +89,19 @@ pub fn MLP(NETWORK_STRUCTURE: []const usize) type {
             self.activated_layers_output[0] = @constCast(input);
             self.layers_output[0] = @constCast(input);
 
-            for (1..NETWORK_STRUCTURE.len) |layer_index| {
+            inline for (1..NETWORK_STRUCTURE.len) |layer_index| {
                 for (0..NETWORK_STRUCTURE[layer_index]) |out_index| {
                     const out = &self.layers_output[layer_index][out_index];
                     out.* = self.biases[bias_index];
                     bias_index += 1;
 
-                    for (self.activated_layers_output[layer_index - 1]) |in| {
-                        out.* += in * self.weights[weight_index];
-                        weight_index += 1;
-                    }
+                    const vec_size = NETWORK_STRUCTURE[layer_index - 1];
+                    const vec_type = @Vector(vec_size, f64);
+
+                    const inputs: vec_type = self.activated_layers_output[layer_index - 1][0..vec_size].*;
+                    const weights: vec_type = self.weights[weight_index..][0..vec_size].*;
+                    weight_index += vec_size;
+                    out.* += @reduce(.Add, inputs * weights);
 
                     self.activated_layers_output[layer_index][out_index] = activation(out.*);
                 }
