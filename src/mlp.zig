@@ -24,14 +24,6 @@ fn costDerivative(output: f64, expected: f64) f64 {
     return 2 * (output - expected);
 }
 
-fn outputCost(output: []const f64, expected: []const f64) f64 {
-    var loss: f64 = 0;
-    for (output, expected) |o, e| {
-        loss += cost(o, e);
-    }
-    return loss;
-}
-
 const HyperParameters = struct {
     learn_rate: f64,
 };
@@ -118,7 +110,6 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
                 var weight_index: usize = weights_amount;
 
                 self.activated_layers_output[0] = @constCast(data_point.input);
-
                 for (
                     self.activated_layers_output[NETWORK_STRUCTURE.len - 1],
                     self.layers_output[NETWORK_STRUCTURE.len - 1],
@@ -127,9 +118,8 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
                 ) |a_output, output, *node_derivative, expected_value| {
                     node_derivative.* = costDerivative(a_output, expected_value) * activationDerivative(output);
                 }
-
-                var layer_index = NETWORK_STRUCTURE.len - 1;
-                while (layer_index > 0) : (layer_index -= 1) {
+                comptime var layer_index = NETWORK_STRUCTURE.len - 1;
+                inline while (layer_index > 0) : (layer_index -= 1) {
                     @memset(self.node_derivatives[layer_index - 1], 0);
                     var out_index = NETWORK_STRUCTURE[layer_index];
                     while (out_index > 0) {
@@ -137,16 +127,21 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
                         bias_index -= 1;
                         self.bias_grads[bias_index] += self.node_derivatives[layer_index][out_index];
 
-                        var in_index = NETWORK_STRUCTURE[layer_index - 1];
-                        while (in_index > 0) {
-                            in_index -= 1;
-                            weight_index -= 1;
-                            self.weights_grads[weight_index] +=
-                                self.activated_layers_output[layer_index - 1][in_index] *
-                                self.node_derivatives[layer_index][out_index];
-                            self.node_derivatives[layer_index - 1][in_index] += self.weights[weight_index] *
-                                self.node_derivatives[layer_index][out_index];
-                        }
+                        const vec_size = NETWORK_STRUCTURE[layer_index - 1];
+                        const vec_type = @Vector(vec_size, f64);
+
+                        var grads_vec: vec_type = self.weights_grads[weight_index - vec_size ..][0..vec_size].*;
+                        const activated_layers_output: vec_type = self.activated_layers_output[layer_index - 1][0..vec_size].*;
+                        const node_derivative: vec_type = @splat(self.node_derivatives[layer_index][out_index]);
+
+                        grads_vec += activated_layers_output * node_derivative;
+                        self.weights_grads[weight_index - vec_size ..][0..vec_size].* = grads_vec;
+
+                        var prev_node_derivatives: vec_type = self.node_derivatives[layer_index - 1][0..vec_size].*;
+                        const weights: vec_type = self.weights[weight_index - vec_size ..][0..vec_size].*;
+                        prev_node_derivatives += weights * node_derivative;
+                        self.node_derivatives[layer_index - 1][0..vec_size].* = prev_node_derivatives;
+                        weight_index -= vec_size;
                     }
                     for (self.node_derivatives[layer_index - 1], self.layers_output[layer_index - 1]) |*node_derivative, z| {
                         node_derivative.* *= activationDerivative(z);

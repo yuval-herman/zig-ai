@@ -30,10 +30,10 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // ### hyper parametes
-    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 20, 10 };
+    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 30, 20, 10 };
     const START_BATCH_SIZE = 500;
-    const LEARN_RATE: f64 = 0.01 / @as(f64, @floatFromInt(START_BATCH_SIZE));
-    const EPOCHS = 1;
+    const LEARN_RATE: f64 = 0.05 / @as(f64, @floatFromInt(START_BATCH_SIZE));
+    const EPOCHS = 30;
 
     // ### initialization
     var mlp = try MLP(&NETWORK_STRUCTURE).init(.{ .learn_rate = LEARN_RATE }, allocator);
@@ -48,11 +48,13 @@ pub fn main() !void {
 
     for (0..EPOCHS) |epoch_counter| {
         std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * START_BATCH_SIZE, START_BATCH_SIZE });
+
         for (0..mnist.training_data.labels.len / START_BATCH_SIZE) |batch_index| {
             const img_batch = 28 * 28 * START_BATCH_SIZE;
             batch.images = mnist.training_data.data[img_batch * batch_index .. img_batch * (batch_index + 1)];
             batch.labels = mnist.training_data.labels[START_BATCH_SIZE * batch_index .. START_BATCH_SIZE * (batch_index + 1)];
             batch.index = 0;
+
             mlp.backprop(&batch);
         }
 
@@ -62,6 +64,7 @@ pub fn main() !void {
 
         var correct: u16 = 0;
         var wrong: u16 = 0;
+
         while (batch.next()) |data_point| {
             const output = mlp.forward(data_point.input);
             var max = output[0];
