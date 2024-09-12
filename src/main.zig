@@ -43,7 +43,7 @@ pub fn main() !void {
     const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 200, 10 };
     const BATCH_SIZE = 500;
     const LEARN_RATE: f64 = 0.5 / @as(f64, @floatFromInt(BATCH_SIZE));
-    const EPOCHS = 25;
+    const EPOCHS = 5;
 
     // ### initialization
     const NetType = MLP(&NETWORK_STRUCTURE);
@@ -89,6 +89,7 @@ pub fn main() !void {
 
             var start: usize = batch_index * BATCH_SIZE;
             var end: usize = 0;
+            waitgroup.reset();
             for (threads_data) |*td| {
                 end = start + base_chunk_size;
                 if (reminder != 0) {
@@ -114,13 +115,13 @@ pub fn main() !void {
             waitgroup.wait();
             for (threads_data) |td| {
                 for (
-                    &mlp.bias_grads,
+                    mlp.bias_grads,
                     td.bias_grads,
                 ) |*bias_grad, *td_bias_grad| {
                     bias_grad.* += td_bias_grad.*;
                     td_bias_grad.* = 0;
                 }
-                for (&mlp.weights_grads, td.weights_grads) |*weight_grad, *td_weights_grad| {
+                for (mlp.weights_grads, td.weights_grads) |*weight_grad, *td_weights_grad| {
                     weight_grad.* += td_weights_grad.*;
                     td_weights_grad.* = 0;
                 }
