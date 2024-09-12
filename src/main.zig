@@ -1,7 +1,7 @@
 const std = @import("std");
 const fs = std.fs;
-const MLP_space = @import("./mlp.zig");
-const MLP = MLP_space.MLP;
+const MLP = @import("./mlp.zig").MLP;
+const Thread = std.Thread;
 
 const BatchIterator = struct {
     images: []const f64,
@@ -29,38 +29,111 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
+    var threadPool = Thread.Pool{ .allocator = allocator, .threads = &[_]std.Thread{} };
+    var waitgroup = Thread.WaitGroup{};
+    defer threadPool.deinit();
+    const threads_amount = (Thread.getCpuCount() catch 1);
+
+    try threadPool.init(.{
+        .allocator = allocator,
+        .n_jobs = @intCast(threads_amount),
+    });
+
     // ### hyper parametes
-    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 30, 20, 10 };
-    const START_BATCH_SIZE = 500;
-    const LEARN_RATE: f64 = 0.05 / @as(f64, @floatFromInt(START_BATCH_SIZE));
-    const EPOCHS = 30;
+    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 200, 10 };
+    const BATCH_SIZE = 500;
+    const LEARN_RATE: f64 = 0.5 / @as(f64, @floatFromInt(BATCH_SIZE));
+    const EPOCHS = 25;
 
     // ### initialization
-    var mlp = try MLP(&NETWORK_STRUCTURE).init(.{ .learn_rate = LEARN_RATE }, allocator);
+    const NetType = MLP(&NETWORK_STRUCTURE);
+    var mlp = try NetType.init(.{ .learn_rate = LEARN_RATE }, allocator);
 
     // ### training
     const mnist = try @import("./emnist.zig").mnist();
-
-    var batch = BatchIterator{
-        .images = undefined,
-        .labels = undefined,
+    const ThreadData = struct {
+        bias_grads: []f64,
+        weights_grads: []f64,
+        layers_output: [][]f64,
+        activated_layers_output: [][]f64,
+        node_derivatives: [][]f64,
+        batch: BatchIterator,
     };
+    std.debug.print("threads: {}\n", .{threads_amount});
+    const threads_data = try allocator.alloc(ThreadData, threads_amount);
+    for (threads_data) |*td| {
+        td.bias_grads = try allocator.alloc(f64, mlp.bias_grads.len);
+        td.weights_grads = try allocator.alloc(f64, mlp.weights_grads.len);
+        td.layers_output = try allocator.alloc([]f64, mlp.layers_output.len);
+        td.activated_layers_output = try allocator.alloc([]f64, mlp.activated_layers_output.len);
+        td.node_derivatives = try allocator.alloc([]f64, mlp.node_derivatives.len);
+        td.node_derivatives[0] = try allocator.alloc(f64, mlp.node_derivatives[0].len);
+        for (1..NETWORK_STRUCTURE.len) |i| {
+            td.layers_output[i] = try allocator.alloc(f64, mlp.layers_output[i].len);
+            td.activated_layers_output[i] = try allocator.alloc(f64, mlp.activated_layers_output[i].len);
+            td.node_derivatives[i] = try allocator.alloc(f64, mlp.node_derivatives[i].len);
+        }
+    }
 
     for (0..EPOCHS) |epoch_counter| {
-        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * START_BATCH_SIZE, START_BATCH_SIZE });
+        mlp.learn_rate = @max(
+            (-0.00015 * @as(f32, @floatFromInt(epoch_counter))) + LEARN_RATE,
+            0.0001 / @as(comptime_float, @floatFromInt(BATCH_SIZE)),
+        );
+        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * BATCH_SIZE, BATCH_SIZE });
 
-        for (0..mnist.training_data.labels.len / START_BATCH_SIZE) |batch_index| {
-            const img_batch = 28 * 28 * START_BATCH_SIZE;
-            batch.images = mnist.training_data.data[img_batch * batch_index .. img_batch * (batch_index + 1)];
-            batch.labels = mnist.training_data.labels[START_BATCH_SIZE * batch_index .. START_BATCH_SIZE * (batch_index + 1)];
-            batch.index = 0;
+        for (0..mnist.training_data.labels.len / BATCH_SIZE) |batch_index| {
+            const img_size = 28 * 28;
+            const base_chunk_size = @divFloor(BATCH_SIZE, threads_amount);
+            var reminder: usize = BATCH_SIZE - base_chunk_size * threads_amount;
 
-            mlp.backprop(&batch);
+            var start: usize = batch_index * BATCH_SIZE;
+            var end: usize = 0;
+            for (threads_data) |*td| {
+                end = start + base_chunk_size;
+                if (reminder != 0) {
+                    reminder -= 1;
+                    end += 1;
+                }
+
+                td.batch.images = mnist.training_data.data[img_size * start .. img_size * end];
+                td.batch.labels = mnist.training_data.labels[start..end];
+                td.batch.index = 0;
+
+                threadPool.spawnWg(&waitgroup, &NetType.extra_backprop, .{
+                    &mlp,
+                    td.bias_grads,
+                    td.weights_grads,
+                    td.layers_output,
+                    td.activated_layers_output,
+                    td.node_derivatives,
+                    &td.batch,
+                });
+                start = end;
+            }
+            waitgroup.wait();
+            for (threads_data) |td| {
+                for (
+                    &mlp.bias_grads,
+                    td.bias_grads,
+                ) |*bias_grad, *td_bias_grad| {
+                    bias_grad.* += td_bias_grad.*;
+                    td_bias_grad.* = 0;
+                }
+                for (&mlp.weights_grads, td.weights_grads) |*weight_grad, *td_weights_grad| {
+                    weight_grad.* += td_weights_grad.*;
+                    td_weights_grad.* = 0;
+                }
+            }
+
+            mlp.applyGrads();
         }
 
-        batch.images = mnist.test_data.data;
-        batch.labels = mnist.test_data.labels;
-        batch.index = 0;
+        var batch = BatchIterator{
+            .images = mnist.test_data.data,
+            .labels = mnist.test_data.labels,
+            .index = 0,
+        };
 
         var correct: u16 = 0;
         var wrong: u16 = 0;
