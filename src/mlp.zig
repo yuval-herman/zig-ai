@@ -40,10 +40,10 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
         const ThisType = @This();
         learn_rate: f64,
 
-        biases: [bias_amount]f64 = undefined,
-        bias_grads: [bias_amount]f64 = undefined,
-        weights: [weights_amount]f64 = undefined,
-        weights_grads: [weights_amount]f64 = undefined,
+        biases: []f64 = undefined,
+        bias_grads: []f64 = undefined,
+        weights: []f64 = undefined,
+        weights_grads: []f64 = undefined,
 
         layers_output: [NETWORK_STRUCTURE.len][]f64 = undefined,
         activated_layers_output: [NETWORK_STRUCTURE.len][]f64 = undefined,
@@ -62,11 +62,16 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
                 mlp.node_derivatives[i] = try allocator.alloc(f64, NETWORK_STRUCTURE[i]);
             }
 
-            for (&mlp.biases, &mlp.bias_grads) |*bias, *grad| {
+            mlp.biases = try allocator.alloc(f64, bias_amount);
+            mlp.bias_grads = try allocator.alloc(f64, bias_amount);
+            mlp.weights = try allocator.alloc(f64, weights_amount);
+            mlp.weights_grads = try allocator.alloc(f64, weights_amount);
+
+            for (mlp.biases, mlp.bias_grads) |*bias, *grad| {
                 bias.* = random.float(f64) / 100;
                 grad.* = 0;
             }
-            for (&mlp.weights, &mlp.weights_grads) |*weight, *grad| {
+            for (mlp.weights, mlp.weights_grads) |*weight, *grad| {
                 weight.* = random.float(f64) / 1000;
                 grad.* = 0;
             }
@@ -108,7 +113,7 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
         }
 
         pub fn backprop(self: *ThisType, batch: anytype) void {
-            self.extra_backprop(&self.bias_grads, &self.weights_grads, &self.layers_output, &self.activated_layers_output, batch);
+            self.extra_backprop(self.bias_grads, self.weights_grads, &self.layers_output, &self.activated_layers_output, batch);
             self.applyGrads();
         }
 
@@ -169,11 +174,11 @@ pub fn MLP(NETWORK_STRUCTURE: []const u32) type {
             }
         }
         pub fn applyGrads(self: *ThisType) void {
-            for (&self.weights, &self.weights_grads) |*weight, *grad| {
+            for (self.weights, self.weights_grads) |*weight, *grad| {
                 weight.* -= grad.* * self.learn_rate;
                 grad.* = 0;
             }
-            for (&self.biases, &self.bias_grads) |*bias, *grad| {
+            for (self.biases, self.bias_grads) |*bias, *grad| {
                 bias.* -= grad.* * self.learn_rate;
                 grad.* = 0;
             }
