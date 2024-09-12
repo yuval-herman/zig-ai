@@ -6,57 +6,93 @@ fn Data(Dtype: type, Ltype: type) type {
         test_data: struct { data: []Dtype, labels: []Ltype },
     };
 }
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
-pub fn mnist() !Data(f64, u8) {
+
+pub fn balanced_dataset(allocator: std.mem.Allocator) !Data(f64, u8) {
     var data = Data(f64, u8){
         .test_data = undefined,
         .training_data = undefined,
     };
-    // ### Labels
+    data.test_data.labels = try readIdxFile("./emnist/emnist-balanced-test-labels-idx1-ubyte.gz", allocator);
+    data.training_data.labels = try readIdxFile("./emnist/emnist-balanced-train-labels-idx1-ubyte.gz", allocator);
+
     {
-        var buf = try allocator.alloc(u8, 40008);
-        _ = try readComp("./emnist/emnist-digits-test-labels-idx1-ubyte.gz", buf);
-        data.test_data.labels = buf[4 * 2 ..]; // test_labels 1
+        const raw = try readIdxFile("./emnist/emnist-balanced-test-images-idx3-ubyte.gz", allocator);
+        defer allocator.free(raw);
+        data.test_data.data = try convertToFloats(raw, allocator);
     }
+
     {
-        var buf = try allocator.alloc(u8, 240008);
-        _ = try readComp("./emnist/emnist-digits-train-labels-idx1-ubyte.gz", buf);
-        data.training_data.labels = buf[4 * 2 ..]; // train_labels 1
+        const raw = try readIdxFile("./emnist/emnist-balanced-train-images-idx3-ubyte.gz", allocator);
+        defer allocator.free(raw);
+        data.training_data.data = try convertToFloats(raw, allocator);
     }
-    // ### Images
-    {
-        const buf: []u8 = try allocator.alloc(u8, 31360016);
-        defer allocator.free(buf);
-        _ = try readComp("./emnist/emnist-digits-test-images-idx3-ubyte.gz", buf);
-        const conv: []f64 = try allocator.alloc(f64, 31360016 - (4 * 4));
-        for (conv, buf[4 * 4 ..]) |*in, mn| {
-            in.* = @as(f64, @floatFromInt(mn)) / 255;
-        }
-        data.test_data.data = conv; // test_images 28*28
-    }
-    {
-        const buf: []u8 = try allocator.alloc(u8, 188160016);
-        defer allocator.free(buf);
-        _ = try readComp("./emnist/emnist-digits-train-images-idx3-ubyte.gz", buf);
-        const conv: []f64 = try allocator.alloc(f64, 188160016 - (4 * 4));
-        for (conv, buf[4 * 4 ..]) |*in, mn| {
-            in.* = @as(f64, @floatFromInt(mn)) / 255;
-        }
-        data.training_data.data = conv; // train_images 28*28
-    }
+
     return data;
 }
 
-fn readComp(path: []const u8, buffer: []u8) !usize {
-    const data = try std.fs.cwd().openFile(path, .{});
-    defer data.close();
-    var decomp = std.compress.gzip.decompressor(data.reader());
+pub fn digits_dataset(allocator: std.mem.Allocator) !Data(f64, u8) {
+    var data = Data(f64, u8){
+        .test_data = undefined,
+        .training_data = undefined,
+    };
+    data.test_data.labels = try readIdxFile("./emnist/emnist-digits-test-labels-idx1-ubyte.gz", allocator);
+    data.training_data.labels = try readIdxFile("./emnist/emnist-digits-train-labels-idx1-ubyte.gz", allocator);
+
+    {
+        const raw = try readIdxFile("./emnist/emnist-digits-test-images-idx3-ubyte.gz", allocator);
+        defer allocator.free(raw);
+        data.test_data.data = try convertToFloats(raw, allocator);
+    }
+
+    {
+        const raw = try readIdxFile("./emnist/emnist-digits-train-images-idx3-ubyte.gz", allocator);
+        defer allocator.free(raw);
+        data.training_data.data = try convertToFloats(raw, allocator);
+    }
+
+    return data;
+}
+
+fn convertToFloats(buffer: []u8, allocator: std.mem.Allocator) ![]f64 {
+    const conv: []f64 = try allocator.alloc(f64, buffer.len);
+    for (conv, buffer) |*in, mn| {
+        in.* = @as(f64, @floatFromInt(mn)) / 255;
+    }
+    return conv;
+}
+
+fn readIdxFile(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    var decomp = std.compress.gzip.decompressor(file.reader());
     var idx: usize = 0;
+    const magic_number = try decomp.get(4);
+
+    const data_type_size: u8 = switch (magic_number[2]) {
+        0x08, 0x09 => 1,
+        0x0B => 2,
+        0x0C => 4,
+        0x0D => 4,
+        0x0E => 8,
+        else => unreachable,
+    };
+    const dimensions: u8 = magic_number[3];
+
+    // std.debug.print("magic number: {x}\n", .{magic_number});
+    // std.debug.print("data is a {} dimension matrix of {} bytes\n", .{ dimensions, data_type_size });
+
+    var data_size_len: usize = data_type_size;
+    for (0..dimensions) |_| {
+        const d_raw = try decomp.get(4);
+        const d_size = std.mem.bigToNative(u32, std.mem.bytesToValue(u32, d_raw));
+        // std.debug.print("size in {} dimension is {}\n", .{ d, d_size });
+        data_size_len *= d_size;
+    }
+    // std.debug.print("overall data size is {}\n", .{data_size_len});
+    const data = try allocator.alloc(u8, data_size_len);
     while (try decomp.next()) |d| {
-        // std.debug.print("{x}\n", .{d});
-        @memcpy(buffer[idx .. idx + d.len], d);
+        @memcpy(data[idx .. idx + d.len], d);
         idx += d.len;
     }
-    return idx;
+    return data;
 }
