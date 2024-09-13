@@ -15,7 +15,7 @@ canvas.addEventListener(
 function draw() {
   if (!is_drawing) return;
   ctx.beginPath();
-  ctx.arc(mouse_position[0], mouse_position[1], 1.5, 0, Math.PI * 2);
+  ctx.arc(mouse_position[0], mouse_position[1], 1, 0, Math.PI * 2);
   ctx.fill();
   ctx.closePath();
   const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
