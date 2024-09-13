@@ -15,7 +15,7 @@ fn activationDerivative(x: f64) f64 {
     return if (x > 0) 1 else 0.01;
 }
 
-fn cost(output: f64, expected: f64) f64 {
+pub fn cost(output: f64, expected: f64) f64 {
     const err = output - expected;
     return err * err;
 }

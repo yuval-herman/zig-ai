@@ -1,13 +1,14 @@
 const std = @import("std");
 const fs = std.fs;
-const MLP = @import("./mlp.zig").MLP;
+const MLP_SPACE = @import("./mlp.zig");
+const MLP = MLP_SPACE.MLP;
 const Thread = std.Thread;
 
 const BatchIterator = struct {
     images: []const f64,
     labels: []const u8,
     index: usize = 0,
-    output_array: [10]f64 = std.mem.zeroes([10]f64),
+    output_array: [47]f64 = std.mem.zeroes([47]f64),
 
     pub fn next(self: *BatchIterator) ?struct { input: []const f64, output: []const f64 } {
         if (self.index == self.labels.len) {
@@ -40,17 +41,17 @@ pub fn main() !void {
     });
 
     // ### hyper parametes
-    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 200, 10 };
-    const BATCH_SIZE = 500;
+    const NETWORK_STRUCTURE = [_]u32{ 28 * 28, 200, 47 };
+    const BATCH_SIZE = 250;
     const LEARN_RATE: f64 = 0.5 / @as(f64, @floatFromInt(BATCH_SIZE));
-    const EPOCHS = 5;
+    const EPOCHS = 30;
 
     // ### initialization
     const NetType = MLP(&NETWORK_STRUCTURE);
     var mlp = try NetType.init(.{ .learn_rate = LEARN_RATE }, allocator);
 
     // ### training
-    const mnist = try @import("./emnist.zig").mnist();
+    const mnist = try @import("./emnist.zig").balanced_dataset(allocator);
     const ThreadData = struct {
         bias_grads: []f64,
         weights_grads: []f64,
@@ -59,7 +60,9 @@ pub fn main() !void {
         node_derivatives: [][]f64,
         batch: BatchIterator,
     };
-    std.debug.print("threads: {}\n", .{threads_amount});
+
+    std.debug.print("threads: {}\nstructure: {d}\n\n", .{ threads_amount, NETWORK_STRUCTURE });
+
     const threads_data = try allocator.alloc(ThreadData, threads_amount);
     for (threads_data) |*td| {
         td.bias_grads = try allocator.alloc(f64, mlp.bias_grads.len);
@@ -75,12 +78,13 @@ pub fn main() !void {
         }
     }
 
+    var progression_tracker: f64 = std.math.inf(f64);
     for (0..EPOCHS) |epoch_counter| {
         mlp.learn_rate = @max(
-            (-0.00015 * @as(f32, @floatFromInt(epoch_counter))) + LEARN_RATE,
+            (-0.00001 * @as(f32, @floatFromInt(epoch_counter))) + LEARN_RATE,
             0.0001 / @as(comptime_float, @floatFromInt(BATCH_SIZE)),
         );
-        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter, mlp.learn_rate * BATCH_SIZE, BATCH_SIZE });
+        std.debug.print("{} epoch\nlearn rate {d:.5}\nbatch size: {d}\n", .{ epoch_counter + 1, mlp.learn_rate * BATCH_SIZE, BATCH_SIZE });
 
         for (0..mnist.training_data.labels.len / BATCH_SIZE) |batch_index| {
             const img_size = 28 * 28;
@@ -138,9 +142,13 @@ pub fn main() !void {
 
         var correct: u16 = 0;
         var wrong: u16 = 0;
+        var overall_cost: f64 = 0;
 
         while (batch.next()) |data_point| {
             const output = mlp.forward(data_point.input);
+            for (output, data_point.output) |o, i| {
+                overall_cost += MLP_SPACE.cost(o, i);
+            }
             var max = output[0];
             var max_index: usize = 0;
             for (output[1..], 1..) |o, i| {
@@ -157,13 +165,18 @@ pub fn main() !void {
                 wrong += 1;
             }
         }
-        std.debug.print("correct: {}\nwrong: {}\ncorrect percent: {d}%\n\n", .{
+        std.debug.print("correct: {}\nwrong: {}\ncorrect percent: {d}%\ntest cost: {d}\ncost change: {d:.4}/{}\n\n", .{
             correct,
             wrong,
             100 * @as(f32, @floatFromInt(correct)) / @as(f32, @floatFromInt(correct + wrong)),
+            overall_cost / @as(f64, @floatFromInt(batch.labels.len * batch.output_array.len)),
+            overall_cost - progression_tracker,
+            batch.labels.len * batch.output_array.len,
         });
+        progression_tracker = overall_cost;
     }
     try writeWeights(NETWORK_STRUCTURE, mlp);
+    std.debug.print("\x07", .{}); // sound bell
 }
 
 fn writeMnistJson(mnist: anytype) !void {
