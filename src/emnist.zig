@@ -61,6 +61,65 @@ fn convertToFloats(buffer: []u8, allocator: std.mem.Allocator) ![]f64 {
     return conv;
 }
 
+const IdxError = error{
+    fileTooShort,
+    malformedMagicNumber,
+    unexpectedDataType,
+    dimensionsWrong,
+};
+
+const IdxDataType = enum {
+    u8,
+    i8,
+    i16,
+    i32,
+    f32,
+    f64,
+};
+
+fn readIdx(reader: anytype, data_type: IdxDataType, allocator: std.mem.Allocator) ![]u8 {
+    const magic_number = reader.readBytesNoEof(4) catch |err| switch (err) {
+        error.EndOfStream => return error.fileTooShort,
+        else => return err,
+    };
+    if (magic_number[0] | magic_number[1] != 0) {
+        return error.malformedMagicNumber;
+    }
+    std.debug.print("magic number: {x}\n", .{magic_number});
+
+    if (data_type != switch (magic_number[2]) {
+        0x08 => IdxDataType.u8,
+        0x09 => IdxDataType.i8,
+        0x0B => IdxDataType.i16,
+        0x0C => IdxDataType.i32,
+        0x0D => IdxDataType.f32,
+        0x0E => IdxDataType.f64,
+        else => return error.malformedMagicNumber,
+    }) {
+        return error.unexpectedDataType;
+    }
+    std.debug.print("data type: {}\n", .{data_type});
+    const dimension_number = magic_number[3];
+    if (dimension_number == 0) {
+        return error.malformedMagicNumber;
+    }
+    std.debug.print("dimensions: {}\n", .{dimension_number});
+
+    var overall_length: usize = 1;
+    for (0..dimension_number) |i| {
+        const d_size = try reader.readInt(u32, .big);
+        overall_length *= d_size;
+        std.debug.print("dimension {} size: {}\n", .{ i, d_size });
+    }
+    std.debug.print("overall data length: {}\n", .{overall_length});
+    const data = try allocator.alloc(u8, overall_length);
+    errdefer allocator.free(data);
+    if (try reader.readAll(data) != data.len) {
+        return error.dimensionsWrong;
+    }
+    return data;
+}
+
 fn readIdxFile(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
